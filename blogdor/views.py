@@ -1,10 +1,13 @@
+import datetime
 from django.conf import settings
 from django.contrib.auth.models import User
 from django.contrib.contenttypes.models import ContentType
 from django.core.urlresolvers import reverse
 from django.http import HttpResponseRedirect, HttpResponsePermanentRedirect, Http404
 from django.shortcuts import render_to_response, get_object_or_404
-from django.views.generic import date_based, list_detail
+from django.views.generic.dates import MonthArchiveView, YearArchiveView
+from django.views.generic.detail import DetailView
+from django.views.generic.list import ListView
 from blogdor.models import Post
 from tagging.models import Tag
 from tagging.views import tagged_object_list
@@ -35,12 +38,11 @@ def post_wpcompat(request, year, month, day, slug):
         return HttpResponsePermanentRedirect(post.get_absolute_url())
 
 def _post(request, year, slug):
-    try:        
-        return list_detail.object_detail(
-                    request,
-                    queryset=Post.objects.published().select_related().filter(date_published__year=year),
-                    slug=slug,
-                    template_object_name='post')
+    try:
+        return DetailView.as_view(model=Post,
+                                  queryset=Post.objects.published().select_related().filter(date_published__year=year),
+                                  slug=slug,
+                                  context_object_name='post')
     except Http404, e:
         try:
             post = Post.objects.published().filter(date_published__year=year, slug__startswith=slug).latest('date_published')
@@ -53,33 +55,25 @@ def _post(request, year, slug):
 #
                   
 def archive(request):
-    return list_detail.object_list(
-                    request,
-                    queryset=Post.objects.published().select_related(),
-                    paginate_by=POSTS_PER_PAGE,
-                    template_object_name='post',
-                    allow_empty=True)
+    return ListView.as_view(model=Post,
+                            queryset=Post.objects.published().select_related(),
+                            paginate_by=POSTS_PER_PAGE,
+                            context_object_name='post')
 
 def archive_month(request, year, month):
-    return date_based.archive_month(
-                    request,
-                    queryset=Post.objects.published().select_related(),
-                    date_field='date_published',
-                    year=year,
-                    month=month,
-                    month_format="%m",
-                    template_object_name='post',
-                    allow_empty=True)
+    return MonthArchiveView.as_view(model=Post,
+                                    queryset=Post.objects.published().select_related(),
+                                    date_field='date_published',
+                                    month=datetime.date(year, month, 1),
+                                    context_object_name='post')
 
 def archive_year(request, year):
-    return date_based.archive_year(
-                    request,
-                    queryset=Post.objects.published().select_related(),
-                    date_field='date_published',
-                    year=year,
-                    template_object_name='post',
-                    make_object_list=YEAR_POST_LIST,
-                    allow_empty=True)
+    return YearArchiveView.as_view(model=Post,
+                                   queryset=Post.objects.published().select_related(),
+                                   date_field='date_published',
+                                   year=year,
+                                   context_object_name='post',
+                                   make_object_list=YEAR_POST_LIST)
 
 #
 # Post tag views
@@ -97,28 +91,30 @@ def tag(request, tag):
 
 def tag_list(request):
     ct = ContentType.objects.get_for_model(Post)
-    return list_detail.object_list(
-                    request,
-                    queryset=Tag.objects.filter(items__content_type=ct),
-                    paginate_by=POSTS_PER_PAGE,
-                    template_name='blogdor/tag_list.html',
-                    template_object_name='tag',
-                    allow_empty=True)
+    return ListView.as_view(model=Tag,
+                            queryset=Tag.objects.filter(items__content_type=ct),
+                            paginate_by=POSTS_PER_PAGE,
+                            template_name='blogdor/tag_list.html',
+                            context_object_name='tag')
 
 #
 # Author views
 #
 
+class AuthorListView(ListView):
+    def get_context_data(self, **kwargs):
+        context = super(AuthorListView, self).get_context_data(**kwargs)
+        context.update({'author': self.author})
+        return context
+
 def author(request, username):
     try:
         author = User.objects.get(username=username)
-        return list_detail.object_list(
-                    request,
-                    queryset=Post.objects.published().select_related().filter(author=author),
-                    paginate_by=POSTS_PER_PAGE,
-                    template_object_name='post',
-                    extra_context={'author':author},
-                    allow_empty=True)
+        return AuthorListView.as_view(model=Post,
+                                      author=author,
+                                      queryset=Post.objects.published().select_related().filter(author=author),
+                                      paginate_by=POSTS_PER_PAGE,
+                                      context_object_name='post')
     except User.DoesNotExist:
         return HttpResponseRedirect(reverse('blogdor_archive'))
 
@@ -132,10 +128,9 @@ def preview(request, post_id, slug):
         if post.is_published:
             return HttpResponsePermanentRedirect(post.get_absolute_url())
         else:
-            return list_detail.object_detail(
-                    request,
-                    queryset=Post.objects.select_related().all(),
-                    object_id=post_id,
-                    template_object_name='post')
+            return DetailView.as_view(model=Post,
+                                      queryset=Post.objects.select_related().all(),
+                                      object_id=post_id,
+                                      context_object_name='post')
     except Post.DoesNotExist:
         return HttpResponseRedirect(reverse('blogdor_archive'))
